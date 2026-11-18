@@ -62,6 +62,7 @@ table.ov{width:100%;border-collapse:collapse}table.ov th,table.ov td{border:1px 
 .btn.dng{background:#b3261e;border-color:#b3261e;color:#fff}.btn.dng-o{border-color:#b3261e;color:#b3261e}.danger{margin-top:-4px}
 
 .admlink{text-align:right;margin:-6px 0 10px}.linkbtn{background:none;border:0;color:#5b6679;text-decoration:underline;cursor:pointer;font:inherit;font-size:13px}
+.chip.sent{background:#e3f3e6;border-color:#4c9a63;color:#1f6b36}.chip.sent.on{background:#1f6b36;color:#fff}.okbox{background:#e3f3e6;border:1px solid #4c9a63;border-radius:10px;padding:14px 16px;margin-bottom:14px;color:#1b4d2c}.sendbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;border-top:1px solid var(--ln);margin-top:8px;padding-top:14px}.btn.big{padding:12px 22px;font-size:16px}
 .alogin{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.alogin input{width:210px;margin:0}
 </style></head><body>
 <div id="banner"></div><div id="app"></div><div id="toast"></div>
@@ -216,7 +217,7 @@ const DAYS = { mie: 'Miércoles', vie: 'Viernes' };
 function calcFeedback(group, evals, day) {
   day = day || 'mie';
   const jurors = [1, 2, 3].map(k => evals[day + '_g' + group + '_j' + k]).filter(Boolean)
-    .filter(e => Object.keys(e.pres || {}).length + Object.keys(e.trab || {}).length > 0);
+    .filter(e => e.submitted && Object.keys(e.pres || {}).length + Object.keys(e.trab || {}).length > 0);
   const comps = [];
   for (const key of ['pres', 'trab']) {
     const rows = RUBRIC[key].map((c, i) => {
@@ -505,7 +506,7 @@ async function retake(k) {
 }
 
 /* ---- guardado ---- */
-function touch() { S.dirty = true; $('#sv').textContent = 'Guardando…'; clearTimeout(touch.t); touch.t = setTimeout(save, 700); render(true); }
+function touch() { S.dirty = true; if (S.draft && S.draft.submitted) S.draft.submitted = false; $('#sv').textContent = 'Guardando…'; clearTimeout(touch.t); touch.t = setTimeout(save, 700); render(true); }
 async function save() {
   const k = mySlot(); if (!k || !S.draft || !sb) { $('#sv').textContent = ''; return; }
   if (S.saving) { touch.t = setTimeout(save, 400); return; }
@@ -514,6 +515,19 @@ async function save() {
   try { const { error } = await sb.from('evals').upsert({ id: evKey(S.group, k), data: d, updated_at: new Date().toISOString() }); if (error) throw error; S.evals[evKey(S.group, k)] = d; S.dirty = false; const sv = $('#sv'); if (sv) sv.textContent = 'Guardado ✓'; }
   catch (e) { const sv = $('#sv'); if (sv) sv.textContent = 'No se pudo guardar'; toast('No se pudo guardar: ' + (e.message || e.code), true); }
   S.saving = false;
+}
+async function sendEval(force) {
+  if (!S.draft || !mySlot()) return;
+  const n = answered(S.draft), miss = TOTAL() - n;
+  if (!n) { toast('Califica al menos un criterio antes de enviar.', true); return; }
+  if (miss > 0 && !force) { S.confirmSend = true; render(); return; }
+  S.confirmSend = false; clearTimeout(touch.t);
+  while (S.saving) await new Promise(r => setTimeout(r, 100));
+  S.draft.submitted = true; S.draft.submittedAt = Date.now(); S.dirty = true;
+  await save();
+  if (S.dirty) { S.draft.submitted = false; toast('No se pudo enviar la evaluación. Intenta de nuevo.', true); render(); return; }
+  S.sent = { day: S.day, group: S.group, jurado: mySlot() }; S.draft = null; S.tab = 'pres';
+  toast('Evaluación enviada.'); render();
 }
 async function flush() { clearTimeout(touch.t); if (S.dirty) await save(); }
 
@@ -552,10 +566,10 @@ function renderAdminBar() {
 function renderOverview() {
   const rows = Array.from({ length: NG }, (_, i) => {
     const g = i + 1, fb = calcFeedback(g, S.evals, S.day);
-    const cells = [1, 2, 3].map(k => { const n = answered(S.evals[evKey(g, k)]); return `<td class="${n >= TOTAL() ? 'ok' : n ? 'part' : ''}">${n ? n + '/' + TOTAL() : '—'}</td>`; }).join('');
+    const cells = [1, 2, 3].map(k => { const e = S.evals[evKey(g, k)], n = answered(e); return `<td class="${e && e.submitted ? 'ok' : n ? 'part' : ''}">${e && e.submitted ? '✓ enviada ' + n + '/' + TOTAL() : n ? 'borrador ' + n + '/' + TOTAL() : '—'}</td>`; }).join('');
     return `<tr data-fbrow="${g}"><th>Grupo ${g}</th>${cells}<td><b>${fb.global == null ? '—' : Math.round(fb.global) + ' / 100'}</b></td></tr>`;
   }).join('');
-  return `<section class="card"><h2>Resumen de evaluaciones (administrador) · ${DAYS[S.day]}</h2>${dayChips()}<table class="ov"><thead><tr><th></th><th>Jurado 1</th><th>Jurado 2</th><th>Jurado 3</th><th>Global</th></tr></thead><tbody>${rows}</tbody></table><div class="row" style="margin-top:12px"><button class="btn p" id="zipbtn">Descargar respaldo (ZIP)</button><span class="grow"></span>${S.confirmAll ? '<span class="hint">¿Cerrar la sesión de los 3 jurados? Las evaluaciones no se borran.</span><button class="btn p" id="closeyes">Sí, cerrar</button><button class="btn" id="closeno">Cancelar</button>' : '<button class="btn" id="closeall">Cerrar sesión de todos los jurados</button>'}</div><p class="hint">Criterios calificados por cada jurado (de ${TOTAL()}). Toca una fila para abrir la retroalimentación de ese grupo.</p></section>`;
+  return `<section class="card"><h2>Resumen de evaluaciones (administrador) · ${DAYS[S.day]}</h2>${dayChips()}<table class="ov"><thead><tr><th></th><th>Jurado 1</th><th>Jurado 2</th><th>Jurado 3</th><th>Global</th></tr></thead><tbody>${rows}</tbody></table><div class="row" style="margin-top:12px"><button class="btn p" id="zipbtn">Descargar respaldo (ZIP)</button><span class="grow"></span>${S.confirmAll ? '<span class="hint">¿Cerrar la sesión de los 3 jurados? Las evaluaciones no se borran.</span><button class="btn p" id="closeyes">Sí, cerrar</button><button class="btn" id="closeno">Cancelar</button>' : '<button class="btn" id="closeall">Cerrar sesión de todos los jurados</button>'}</div><p class="hint">Solo las evaluaciones <b>enviadas</b> cuentan para la nota y la retroalimentación; los borradores aparecen como "borrador". Toca una fila para abrir la retroalimentación de ese grupo.</p></section>`;
 }
 function renderHeader() {
   return `<header class="top">${S.logo ? `<img src="${S.logo}" alt="Escudo Universidad de La Sabana">` : '<div class="nologo">Escudo<br>pendiente</div>'}<div><div class="h1">Evaluación Entrega 3</div><div class="h2">Facultad de Ingeniería - Universidad de La Sabana</div><div class="h3">Experiencia Centrada en el Diseño, profesor: Yosimar Díaz Monterroza</div></div></header>`;
@@ -581,7 +595,14 @@ function renderEval() {
   const me = mySlot();
   if (!me) return `<section class="card muted-card"><h2>2 · Evaluación</h2><p class="hint">Elige tu puesto de jurado arriba para empezar a evaluar.</p></section>`;
   if (!S.draft) loadDraft();
-  const chips = Array.from({ length: NG }, (_, i) => { const g = i + 1, n = answered(S.evals[evKey(g, me)]); return `<button class="chip ${S.group === g ? 'on' : ''} ${n ? 'done' : ''}" data-grp="${g}" title="${n ? n + '/' + TOTAL() + ' criterios' : 'Sin calificar'}">${g}${n >= TOTAL() ? ' ✓' : n ? ' •' : ''}</button>`; }).join('');
+  const chips = Array.from({ length: NG }, (_, i) => { const g = i + 1, e = S.evals[evKey(g, me)], n = answered(e), sent = e && e.submitted; return `<button class="chip ${S.group === g ? 'on' : ''} ${sent ? 'sent' : n ? 'done' : ''}" data-grp="${g}" title="${sent ? 'Enviada' : n ? 'Borrador ' + n + '/' + TOTAL() : 'Sin calificar'}">${g}${sent ? ' ✓' : n ? ' •' : ''}</button>`; }).join('');
+  if (S.sent && S.sent.day === S.day && S.sent.group === S.group && S.sent.jurado === me) {
+    return `<section class="card"><h2>2 · Evaluación <span class="who">Jurado ${me} · ${esc(S.name)}</span></h2>
+    <div class="okbox"><b>✓ Evaluación enviada</b><br>Grupo ${S.group} – ${DAYS[S.day]}. Gracias, quedó registrada y el formulario está limpio.</div>
+    ${dayChips()}<div class="lbl">Evaluar otro grupo</div><div class="chips">${chips}</div>
+    <button class="btn" id="reopen">Corregir la evaluación enviada</button></section>`;
+  }
+  if (!S.draft) loadDraft();
   const grp = `${dayChips()}<div class="lbl">Grupo a evaluar (1–${NG})</div><div class="chips">${chips}</div><div class="row">
     <div class="tabs">${['pres', 'trab'].map(t => `<button class="tab ${S.tab === t ? 'on' : ''}" data-tab="${t}">${t === 'pres' ? 'Presentación' : 'Trabajo escrito'}</button>`).join('')}</div>
     <span id="sv" class="sv"></span></div>`;
@@ -598,13 +619,15 @@ function renderEval() {
   return `<section class="card"><h2>2 · Evaluación <span class="who">Jurado ${me} · ${esc(S.name)}</span></h2>${grp}
   <div class="score">Tu calificación en esta rúbrica: <b>${wr ? score + ' / 100' : '—'}</b> <span class="muted">· ${Object.keys(S.draft[key]).length}/${RUBRIC[key].length} criterios calificados</span></div>
   ${rows}
-  <label class="lbl">Comentario general (opcional)<textarea id="gen" rows="3" placeholder="Comentario general para el grupo">${esc(S.draft.general || '')}</textarea></label></section>`;
+  <label class="lbl">Comentario general (opcional)<textarea id="gen" rows="3" placeholder="Comentario general para el grupo">${esc(S.draft.general || '')}</textarea></label>
+  ${S.draft.submitted ? '<div class="hint">Esta evaluación ya fue enviada. Si cambias algo, vuelve a enviarla.</div>' : ''}
+  <div class="sendbar">${S.confirmSend ? `<span class="hint">Faltan ${TOTAL() - answered(S.draft)} de ${TOTAL()} criterios sin calificar. ¿Enviar de todos modos?</span><button class="btn p" id="sendyes">Sí, enviar</button><button class="btn" id="sendno">Seguir editando</button>` : `<button class="btn p big" id="sendbtn">${S.draft.submitted ? 'Volver a enviar evaluación' : 'Enviar evaluación'}</button><span class="hint">${answered(S.draft)}/${TOTAL()} criterios calificados · Grupo ${S.group} – ${DAYS[S.day]}</span>`}</div></section>`;
 }
 
 function renderFeedback() {
   const g = S.fbGroup;
   const fb = calcFeedback(g, S.evals, S.day);
-  const status = [1, 2, 3].map(k => { const e = S.evals[evKey(g, k)]; const n = answered(e); return `<span class="pill ${n ? 'mine' : 'free'}">Jurado ${k}: ${n}/${TOTAL()}</span>`; }).join(' ');
+  const status = [1, 2, 3].map(k => { const e = S.evals[evKey(g, k)]; const n = answered(e); return `<span class="pill ${e && e.submitted ? 'mine' : n ? 'busy' : 'free'}">Jurado ${k}: ${e && e.submitted ? 'enviada ✓' : n ? 'borrador' : 'sin evaluar'}</span>`; }).join(' ');
   const logoBox = `<details class="logo"><summary>Escudo de la Universidad ${S.logo ? '· cargado ✓' : '· pendiente'}</summary>
     <p class="hint">Ya está cargado el escudo azul de la Universidad. Si quieres cambiarlo, sube otra imagen (PNG/JPG con fondo blanco o transparente).</p>
     <input type="file" id="logoFile" accept="image/*"> <label class="chk"><input type="checkbox" id="recolor" ${S.recolor ? 'checked' : ''}> Recolorear a azul</label>
@@ -613,7 +636,7 @@ function renderFeedback() {
   <div class="lbl">Grupo (1–${NG})</div><div class="chips">${Array.from({ length: NG }, (_, i) => { const x = i + 1, c = calcFeedback(x, S.evals, S.day).n; return `<button class="chip ${g === x ? 'on' : ''} ${c ? 'done' : ''}" data-fbg="${x}" title="${c} evaluación(es)">${x}${c ? ' · ' + c : ''}</button>`; }).join('')}</div>
   <div class="row">${status}
   <span class="grow"></span><button class="btn p" id="dlw" ${fb.n ? '' : 'disabled'}>Descargar Word</button><button class="btn p" id="dlp" ${fb.n ? '' : 'disabled'}>Descargar PDF</button></div>
-  <div class="row danger">${S.confirmDel ? `<span class="hint">${S.confirmDel === 'all' ? '¿Borrar TODAS las evaluaciones de Miércoles y Viernes?' : '¿Borrar las evaluaciones del Grupo ' + g + ' – ' + DAYS[S.day] + '?'} No se puede deshacer.</span><button class="btn dng" id="delyes">Sí, borrar</button><button class="btn" id="delno">Cancelar</button>` : `<button class="btn dng-o" id="delgrp" ${fb.n ? '' : 'disabled'}>Borrar evaluación de este grupo</button><button class="btn dng-o" id="delall">Borrar todas las evaluaciones</button>`}</div>
+  <div class="row danger">${S.confirmDel ? `<span class="hint">${S.confirmDel === 'all' ? '¿Borrar TODAS las evaluaciones de Miércoles y Viernes?' : '¿Borrar las evaluaciones del Grupo ' + g + ' – ' + DAYS[S.day] + '?'} No se puede deshacer.</span><button class="btn dng" id="delyes">Sí, borrar</button><button class="btn" id="delno">Cancelar</button>` : `<button class="btn dng-o" id="delgrp" ${[1, 2, 3].some(k => S.evals[evKey(g, k)]) ? '' : 'disabled'}>Borrar evaluación de este grupo</button><button class="btn dng-o" id="delall">Borrar todas las evaluaciones</button>`}</div>
     <div class="stage">${previewHTML(fb, S.logo)}</div></section>`;
 }
 
@@ -633,6 +656,10 @@ function render(light) {
 }
 
 function bind() {
+  const sb1 = $('#sendbtn'); if (sb1) sb1.onclick = () => sendEval(false);
+  const sy = $('#sendyes'); if (sy) sy.onclick = () => sendEval(true);
+  const sn = $('#sendno'); if (sn) sn.onclick = () => { S.confirmSend = false; render(); };
+  const ro = $('#reopen'); if (ro) ro.onclick = () => { S.sent = null; loadDraft(); render(); };
   const ao = $('#alopen'); if (ao) ao.onclick = () => { S.showLogin = true; render(); };
   const ac = $('#alcancel'); if (ac) ac.onclick = () => { S.showLogin = false; render(); };
   const al = $('#alogin'); if (al) al.onsubmit = async ev => { ev.preventDefault(); const { error } = await sb.auth.signInWithPassword({ email: $('#ae').value.trim(), password: $('#ap').value }); if (error) { toast('No se pudo entrar: ' + (error.message || error.code || 'error desconocido') + (error.status ? ' (' + error.status + ')' : ''), true); return; } S.showLogin = false; S.admin = true; location.hash = 'admin'; render(); };
@@ -645,7 +672,7 @@ function bind() {
   const ca = $('#closeall'); if (ca) ca.onclick = () => { S.confirmAll = true; render(); };
   const cy = $('#closeyes'); if (cy) cy.onclick = closeAll;
   const cn = $('#closeno'); if (cn) cn.onclick = () => { S.confirmAll = false; render(); };
-  document.querySelectorAll('[data-day]').forEach(b => b.onclick = async () => { await flush(); S.day = b.dataset.day; S.dirty = false; loadDraft(); render(); });
+  document.querySelectorAll('[data-day]').forEach(b => b.onclick = async () => { await flush(); S.sent = null; S.confirmSend = false; S.day = b.dataset.day; S.dirty = false; loadDraft(); render(); });
   document.querySelectorAll('[data-view]').forEach(b => b.onclick = () => setView(b.dataset.view));
   document.querySelectorAll('[data-fbrow]').forEach(r => r.onclick = () => { S.fbGroup = +r.dataset.fbrow; render(); setTimeout(() => { const f = document.querySelector('.stage'); f && f.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50); });
   const nm = $('#nm'); if (nm) nm.oninput = () => { S.name = nm.value; lsSet('jname', S.name); };
@@ -653,7 +680,7 @@ function bind() {
   document.querySelectorAll('[data-release]').forEach(b => b.onclick = async () => { await flush(); release(+b.dataset.release); });
   document.querySelectorAll('[data-force]').forEach(b => b.onclick = () => release(+b.dataset.force, true));
   document.querySelectorAll('[data-retake]').forEach(b => b.onclick = () => retake(+b.dataset.retake));
-  document.querySelectorAll('[data-grp]').forEach(b => b.onclick = async () => { await flush(); S.group = +b.dataset.grp; S.fbGroup = S.group; S.dirty = false; loadDraft(); render(); });
+  document.querySelectorAll('[data-grp]').forEach(b => b.onclick = async () => { await flush(); S.sent = null; S.confirmSend = false; S.group = +b.dataset.grp; S.fbGroup = S.group; S.dirty = false; loadDraft(); render(); });
   document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); });
   document.querySelectorAll('input[type=radio][data-k]').forEach(r => r.onchange = () => { S.draft[r.dataset.k][r.dataset.i] = +r.value; touch(); r.closest('.lvs').querySelectorAll('.lv').forEach(l => l.classList.remove('sel')); r.closest('.lv').classList.add('sel'); });
   document.querySelectorAll('textarea[data-obs]').forEach(t => t.oninput = () => { S.draft.obs[t.dataset.obs] = t.value; touch(); });
