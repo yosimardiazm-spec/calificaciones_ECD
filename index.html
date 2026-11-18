@@ -635,7 +635,7 @@ function render(light) {
 function bind() {
   const ao = $('#alopen'); if (ao) ao.onclick = () => { S.showLogin = true; render(); };
   const ac = $('#alcancel'); if (ac) ac.onclick = () => { S.showLogin = false; render(); };
-  const al = $('#alogin'); if (al) al.onsubmit = async ev => { ev.preventDefault(); const { error } = await sb.auth.signInWithPassword({ email: $('#ae').value.trim(), password: $('#ap').value }); if (error) { toast('Correo o clave incorrectos.', true); return; } S.showLogin = false; S.admin = true; location.hash = 'admin'; render(); };
+  const al = $('#alogin'); if (al) al.onsubmit = async ev => { ev.preventDefault(); const { error } = await sb.auth.signInWithPassword({ email: $('#ae').value.trim(), password: $('#ap').value }); if (error) { toast('No se pudo entrar: ' + (error.message || error.code || 'error desconocido') + (error.status ? ' (' + error.status + ')' : ''), true); return; } S.showLogin = false; S.admin = true; location.hash = 'admin'; render(); };
   const ax = $('#alout'); if (ax) ax.onclick = async () => { await sb.auth.signOut(); S.admin = false; render(); };
   const dg = $('#delgrp'); if (dg) dg.onclick = () => { S.confirmDel = 'group'; render(); };
   const da = $('#delall'); if (da) da.onclick = () => { S.confirmDel = 'all'; render(); };
